@@ -4,6 +4,10 @@ import anthropic
 import textwrap
 import os
 
+from pdf2image import convert_from_bytes
+import pytesseract
+from PIL import Image
+
 # Claude prompt
 PROMPT_TEMPLATE = """Please analyze the uploaded course evaluation PDF and extract feedback in the following format:
 
@@ -55,62 +59,36 @@ PDF Text:
 st.set_page_config(page_title="Course Evaluation Analyzer", layout="wide")
 st.title("📋 Course Evaluation Analyzer with Claude")
 
-# API key: try st.secrets first (for deployment), then fallback to input
+# Claude API key
 api_key = os.getenv("ANTHROPIC_API_KEY") or st.text_input("Enter your Claude API key", type="password")
-
 uploaded_file = st.file_uploader("Upload a Course Evaluation PDF", type="pdf")
+
+def ocr_from_pdf(file_bytes):
+    images = convert_from_bytes(file_bytes)
+    text = ""
+    for i, img in enumerate(images):
+        st.write(f"🔍 Running OCR on page {i+1}")
+        text += pytesseract.image_to_string(img)
+    return text
 
 if uploaded_file and api_key:
     st.info("Processing PDF...")
 
     try:
-        # Extract text from PDF
+        # Try extracting text with PyMuPDF
         doc = fitz.open(stream=uploaded_file.read(), filetype="pdf")
         full_text = ""
         for page in doc:
             full_text += page.get_text()
 
-        # Show preview of extracted text
+        if not full_text.strip():
+            st.warning("⚠️ No text extracted with PyMuPDF. Trying OCR (image-based PDF).")
+            uploaded_file.seek(0)
+            full_text = ocr_from_pdf(uploaded_file.read())
+
+        # Show preview
         st.subheader("📝 Preview of Extracted Text")
         st.text_area("First 3000 characters:", full_text[:3000])
 
         if not full_text.strip():
-            st.warning("⚠️ No text extracted from PDF. It may be a scanned image (not text-based).")
-        else:
-            # Chunk PDF text
-            chunk_size = 12000
-            chunks = textwrap.wrap(full_text, chunk_size)
-
-            client = anthropic.Anthropic(api_key=api_key)
-            results = []
-
-            for i, chunk in enumerate(chunks):
-                st.write(f"⏳ Sending chunk {i+1} of {len(chunks)} to Claude...")
-
-                try:
-                    message = client.messages.create(
-                        model="claude-3-opus-20240229",
-                        max_tokens=2048,
-                        temperature=0.3,
-                        messages=[
-                            {
-                                "role": "user",
-                                "content": PROMPT_TEMPLATE + chunk
-                            }
-                        ]
-                    )
-
-                    # Print full Claude response
-                    result_text = message.content[0].text.strip()
-                    st.subheader(f"🧠 Claude Output for Chunk {i+1}")
-                    st.markdown(result_text)
-                    results.append(result_text)
-
-                except Exception as e:
-                    st.error(f"❌ Claude API error on chunk {i+1}: {e}")
-                    break
-
-            st.success("✅ All chunks processed!")
-
-    except Exception as e:
-        st.error(f"Unexpected error during PDF processing: {e}")
+            st.error("❌ Still couldn't extract text. PD
