@@ -55,7 +55,7 @@ Unique Suggestions: Any one-off suggestions that might be worth considering
 PDF Text:
 """
 
-# App title
+# Page config
 st.set_page_config(page_title="Course Evaluation Analyzer", layout="wide")
 st.title("📋 Course Evaluation Analyzer with Claude")
 
@@ -75,12 +75,13 @@ if uploaded_file and api_key:
     st.info("Processing PDF...")
 
     try:
-        # Try extracting text with PyMuPDF
+        # First try text-based extraction with PyMuPDF
         doc = fitz.open(stream=uploaded_file.read(), filetype="pdf")
         full_text = ""
         for page in doc:
             full_text += page.get_text()
 
+        # If PyMuPDF fails, fallback to OCR
         if not full_text.strip():
             st.warning("⚠️ No text extracted with PyMuPDF. Trying OCR (image-based PDF).")
             uploaded_file.seek(0)
@@ -91,4 +92,35 @@ if uploaded_file and api_key:
         st.text_area("First 3000 characters:", full_text[:3000])
 
         if not full_text.strip():
-            st.error("❌ Still couldn't extract text. PD
+            st.error("❌ Still couldn't extract text. PDF might be too low resolution for OCR.")
+        else:
+            # Chunk and send to Claude
+            chunk_size = 12000
+            chunks = textwrap.wrap(full_text, chunk_size)
+            client = anthropic.Anthropic(api_key=api_key)
+            results = []
+
+            for i, chunk in enumerate(chunks):
+                st.write(f"⏳ Sending chunk {i+1} of {len(chunks)} to Claude...")
+
+                try:
+                    message = client.messages.create(
+                        model="claude-3-opus-20240229",
+                        max_tokens=2048,
+                        temperature=0.3,
+                        messages=[{"role": "user", "content": PROMPT_TEMPLATE + chunk}]
+                    )
+
+                    result_text = message.content[0].text.strip()
+                    st.subheader(f"🧠 Claude Output for Chunk {i+1}")
+                    st.markdown(result_text)
+                    results.append(result_text)
+
+                except Exception as e:
+                    st.error(f"Claude API error: {e}")
+                    break
+
+            st.success("✅ All chunks processed!")
+
+    except Exception as e:
+        st.error(f"Error during processing: {e}")
